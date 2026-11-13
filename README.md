@@ -6,6 +6,8 @@ into a real keystroke in whatever app you were typing in.
 
 Written in pure Kotlin with Compose Multiplatform (Desktop). No native code.
 
+Built with [Claude Code](https://claude.com/claude-code), Anthropic's AI coding assistant.
+
 ## Run it
 
 You need a JDK, version 17 or newer, on Windows (for example Temurin 17 or 21).
