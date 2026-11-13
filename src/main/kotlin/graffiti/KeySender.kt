@@ -22,21 +22,34 @@ class KeySender {
     }
 
     private fun press(r: Robot, e: Emit) {
-        when (e) {
-            Emit.Backspace -> tap(r, KeyEvent.VK_BACK_SPACE, false)
-            Emit.Delete -> tap(r, KeyEvent.VK_DELETE, false)
-            Emit.Enter -> tap(r, KeyEvent.VK_ENTER, false)
-            is Emit.Ch -> keyFor(e.c)?.let { (vk, shift) -> tap(r, vk, shift) }
+        val mods = ArrayList<Int>()
+        var key = e
+        if (key is Emit.Combo) {
+            if (key.ctrl) mods += KeyEvent.VK_CONTROL
+            if (key.alt) mods += KeyEvent.VK_ALT
+            key = key.key
         }
+        val (vk, shift) = when (key) {
+            Emit.Backspace -> KeyEvent.VK_BACK_SPACE to false
+            Emit.Delete -> KeyEvent.VK_DELETE to false
+            Emit.Enter -> KeyEvent.VK_ENTER to false
+            Emit.Escape -> KeyEvent.VK_ESCAPE to false
+            is Emit.Ch -> keyFor(key.c) ?: return
+            is Emit.Combo -> return
+        }
+        if (shift) mods += KeyEvent.VK_SHIFT
+        tap(r, vk, mods)
     }
 
-    private fun tap(r: Robot, vk: Int, shift: Boolean) {
-        if (shift) r.keyPress(KeyEvent.VK_SHIFT)
+    /** Holds [mods] down, presses and releases [vk], then lets go of [mods] in reverse order. */
+    private fun tap(r: Robot, vk: Int, mods: List<Int>) {
+        val held = ArrayList<Int>()
         try {
+            for (m in mods) { r.keyPress(m); held += m }
             r.keyPress(vk)
             r.keyRelease(vk)
         } finally {
-            if (shift) r.keyRelease(KeyEvent.VK_SHIFT)
+            for (m in held.asReversed()) r.keyRelease(m)
         }
     }
 

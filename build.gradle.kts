@@ -55,7 +55,7 @@ tasks.register<Zip>("packagePortable") {
 // Single-file build: one GraffitiPad.exe with the portable app embedded in it. On first run it
 // unpacks to %LOCALAPPDATA%\GraffitiPad\ and starts from there (see src/launcher/Launcher.cs).
 // It is compiled with the C# compiler that ships with Windows (.NET Framework 4).
-//   gradlew.bat packageSingleExe  ->  build\single\GraffitiPad.exe
+//   gradlew.bat packageSingleExe  ->  build\single\GraffitiPad-<version>.exe
 tasks.register<Exec>("packageSingleExe") {
     group = "compose desktop"
     description = "Builds one self-unpacking GraffitiPad.exe that needs no install."
@@ -65,12 +65,13 @@ tasks.register<Exec>("packageSingleExe") {
     val source = file("src/launcher/Launcher.cs")
     inputs.file(source)
     inputs.file(zip)
-    outputs.file(File(work, "GraffitiPad.exe"))
+    val exe = File(work, "GraffitiPad-${project.version}.exe")
+    outputs.file(exe)
     val csc = File(System.getenv("WINDIR") ?: "C:/Windows", "Microsoft.NET/Framework64/v4.0.30319/csc.exe")
     executable = csc.path
     args(
         "/nologo", "/target:winexe", "/optimize+",
-        "/out:" + File(work, "GraffitiPad.exe").path,
+        "/out:" + exe.path,
         "/reference:System.IO.Compression.dll",
         "/reference:System.IO.Compression.FileSystem.dll",
         "/reference:System.Windows.Forms.dll",

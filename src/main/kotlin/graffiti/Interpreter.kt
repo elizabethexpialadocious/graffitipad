@@ -9,6 +9,12 @@ sealed interface Emit {
     /** Forward delete: removes the character after the cursor. */
     data object Delete : Emit
     data object Enter : Emit
+    data object Escape : Emit
+    /** [key] pressed while holding Ctrl and/or Alt, e.g. Ctrl+C or Ctrl+Backspace. */
+    data class Combo(val key: Emit, val ctrl: Boolean, val alt: Boolean) : Emit {
+        /** "Ctrl+Alt+" etc., for showing on screen. */
+        val prefix get() = (if (ctrl) "Ctrl+" else "") + (if (alt) "Alt+" else "")
+    }
 }
 
 enum class Zone { LETTERS, NUMBERS }
@@ -74,20 +80,37 @@ class TemplateLibrary(private val file: File?) {
 class Interpreter(val library: TemplateLibrary, var minScore: Double = DEFAULT_MIN_SCORE) {
     var shift = ShiftState.OFF; private set
     var punct = false; private set
+    /** One-shot modifiers: held down for the next key that types something, then released. */
+    var ctrl = false; private set
+    var alt = false; private set
 
     data class Outcome(val emits: List<Emit>, val shown: String, val score: Double?, val accepted: Boolean)
 
-    fun reset() { shift = ShiftState.OFF; punct = false }
+    fun reset() { shift = ShiftState.OFF; punct = false; ctrl = false; alt = false }
 
     /** Mode chips in the header: each one turns its mode on, or back off if it was on. */
     fun toggleShift() { shift = if (shift == ShiftState.ONCE) ShiftState.OFF else ShiftState.ONCE }
     fun toggleCaps() { shift = if (shift == ShiftState.LOCK) ShiftState.OFF else ShiftState.LOCK }
     fun togglePunct() { punct = !punct }
+    fun toggleCtrl() { ctrl = !ctrl }
+    fun toggleAlt() { alt = !alt }
 
-    /** The Delete key on the button row. Like other non-punctuation keys, it leaves punctuation mode. */
-    fun delete(): Outcome {
+    /** Wraps the key in an outcome with Ctrl/Alt if either is armed, then disarms them. */
+    private fun withModifiers(o: Outcome): Outcome {
+        if (!(ctrl || alt) || o.emits.isEmpty()) return o
+        val combo = Emit.Combo(o.emits[0], ctrl, alt)
+        val out = Outcome(listOf(combo) + o.emits.drop(1), combo.prefix + o.shown, o.score, o.accepted)
+        ctrl = false; alt = false
+        return out
+    }
+
+    /** The Delete and Esc keys on the button row. Like other non-punctuation keys, they leave punctuation mode. */
+    fun delete(): Outcome = buttonKey(Emit.Delete, "delete")
+    fun escape(): Outcome = buttonKey(Emit.Escape, "esc")
+
+    private fun buttonKey(e: Emit, shown: String): Outcome {
         punct = false
-        return Outcome(listOf(Emit.Delete), "delete", null, true)
+        return withModifiers(Outcome(listOf(e), shown, null, true))
     }
 
     fun candidates(zone: Zone): List<Template> = library.templates.filter {
@@ -98,7 +121,7 @@ class Interpreter(val library: TemplateLibrary, var minScore: Double = DEFAULT_M
     fun tap(): Outcome {
         return if (punct) {
             punct = false
-            Outcome(listOf(Emit.Ch('.')), ".", null, true)
+            withModifiers(Outcome(listOf(Emit.Ch('.')), ".", null, true))
         } else {
             punct = true
             Outcome(emptyList(), "punctuation…", null, true)
@@ -143,13 +166,15 @@ class Interpreter(val library: TemplateLibrary, var minScore: Double = DEFAULT_M
                 shown = when (shift) { ShiftState.OFF -> "shift off"; ShiftState.ONCE -> "shift"; ShiftState.LOCK -> "caps lock" }
             }
             group == Group.LETTER -> {
-                val c = if (shift != ShiftState.OFF) name[0].uppercaseChar() else name[0]
+                // Like a real keyboard, Caps Lock doesn't turn Ctrl+C into Ctrl+Shift+C; Shift does.
+                val upper = if (ctrl || alt) shift == ShiftState.ONCE else shift != ShiftState.OFF
+                val c = if (upper) name[0].uppercaseChar() else name[0]
                 if (shift == ShiftState.ONCE) shift = ShiftState.OFF
                 emits += Emit.Ch(c); shown = c.toString()
             }
             else -> { emits += Emit.Ch(name[0]); shown = name }
         }
-        return Outcome(emits, shown, score, true)
+        return withModifiers(Outcome(emits, shown, score, true))
     }
 
     companion object {

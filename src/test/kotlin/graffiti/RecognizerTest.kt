@@ -85,11 +85,41 @@ class RecognizerTest {
         i.togglePunct(); assertEquals(false, i.punct)
     }
 
-    @Test fun deleteKey() {
+    @Test fun deleteAndEscapeKeys() {
         val i = Interpreter(lib)
         i.tap()
         assertEquals(listOf<Emit>(Emit.Delete), i.delete().emits)
         assertEquals(false, i.punct)
+        i.tap()
+        assertEquals(listOf<Emit>(Emit.Escape), i.escape().emits)
+        assertEquals(false, i.punct)
+        i.toggleCtrl()
+        assertEquals(listOf<Emit>(Emit.Combo(Emit.Escape, ctrl = true, alt = false)), i.escape().emits)
+    }
+
+    @Test fun ctrlAndAltApplyToTheNextKeyOnly() {
+        val i = Interpreter(lib)
+        fun combo(k: Emit, ctrl: Boolean = true, alt: Boolean = false) = listOf<Emit>(Emit.Combo(k, ctrl, alt))
+        i.toggleCtrl()
+        assertEquals(combo(Emit.Ch('c')), i.press("c", Group.LETTER).emits)
+        assertEquals(false, i.ctrl)
+        assertEquals(listOf<Emit>(Emit.Ch('v')), i.press("v", Group.LETTER).emits)
+        // the Shift stroke doesn't use up Ctrl; they combine into Ctrl+Shift
+        i.toggleCtrl(); i.press("shift", Group.SPECIAL)
+        assertEquals(true, i.ctrl)
+        assertEquals(combo(Emit.Ch('Z')), i.press("z", Group.LETTER).emits)
+        // Caps Lock doesn't add Shift to a shortcut
+        i.toggleCaps(); i.toggleCtrl()
+        assertEquals(combo(Emit.Ch('s')), i.press("s", Group.LETTER).emits)
+        i.toggleCaps()
+        // Ctrl+Alt together, and Alt alone, on special keys
+        i.toggleCtrl(); i.toggleAlt()
+        assertEquals(combo(Emit.Delete, alt = true), i.delete().emits)
+        i.toggleAlt()
+        assertEquals(combo(Emit.Backspace, ctrl = false, alt = true), i.press("backspace", Group.SPECIAL).emits)
+        // toggling twice cancels
+        i.toggleCtrl(); i.toggleCtrl()
+        assertEquals(listOf<Emit>(Emit.Enter), i.press("enter", Group.SPECIAL).emits)
     }
 
     @Test fun keyCodesExistForEveryTypableCharacter() {

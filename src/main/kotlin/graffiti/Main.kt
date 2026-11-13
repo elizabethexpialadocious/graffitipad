@@ -55,7 +55,11 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.Placeable
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.layoutId
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.unit.dp
@@ -82,6 +86,17 @@ private const val SPLIT = 0.6f
 private val GUIDE_HEIGHT = 220.dp
 private val GAP = 8.dp
 
+/**
+ * Writing is the app's main job, so the pad never gets shorter than this. When the window is
+ * made smaller, the guide shrinks first (it scrolls) and disappears below [GUIDE_MIN], then the
+ * status line goes. The window can't be made smaller than what is left.
+ */
+private val PAD_MIN_HEIGHT = 160.dp
+private val GUIDE_MIN = 56.dp
+/** Narrow enough to tuck away, wide enough for the header and button rows. */
+private val MIN_CONTENT_WIDTH = 520.dp
+private val CONTENT_PADDING = 12.dp
+
 fun main() = application {
     val state = rememberWindowState(width = 560.dp, height = 640.dp, position = WindowPosition(Alignment.BottomEnd))
     // focusable = false: clicking or drawing on the pad never takes keyboard focus away from
@@ -101,21 +116,34 @@ fun main() = application {
             window.contentPane.background = bg
         }
         MaterialTheme {
-            GraffitiApp(onGuideShown = { shown ->
-                // Grow or shrink the window by exactly the guide's height. The guide sits
-                // below the pad, so keeping the top-left corner fixed keeps the writing area
-                // in the same place and at the same size.
-                val loc = window.location
-                state.position = WindowPosition(loc.x.dp, loc.y.dp)
-                val delta = GUIDE_HEIGHT + GAP
-                state.size = DpSize(state.size.width, state.size.height + if (shown) delta else -delta)
-            })
+            GraffitiApp(
+                onGuideShown = { shown, delta ->
+                    // Grow or shrink the window by exactly the guide's height. The guide sits
+                    // below the pad, so keeping the top-left corner fixed keeps the writing
+                    // area in the same place and at the same size.
+                    val loc = window.location
+                    state.position = WindowPosition(loc.x.dp, loc.y.dp)
+                    state.size = DpSize(state.size.width, state.size.height + if (shown) delta else -delta)
+                },
+                onMinContentSize = { min ->
+                    // AWT window units are dp on Windows; add the title bar and borders.
+                    val i = window.insets
+                    val d = java.awt.Dimension(
+                        Math.round(min.width.value) + i.left + i.right,
+                        Math.round(min.height.value) + i.top + i.bottom,
+                    )
+                    if (window.minimumSize != d) window.minimumSize = d
+                },
+            )
         }
     }
 }
 
 @Composable
-fun GraffitiApp(onGuideShown: (Boolean) -> Unit = {}) {
+fun GraffitiApp(
+    onGuideShown: (shown: Boolean, delta: Dp) -> Unit = { _, _ -> },
+    onMinContentSize: (DpSize) -> Unit = {},
+) {
     val library = remember { TemplateLibrary(TemplateLibrary.defaultFile()) }
     val interp = remember { Interpreter(library) }
     val sender = remember { KeySender() }
@@ -123,24 +151,32 @@ fun GraffitiApp(onGuideShown: (Boolean) -> Unit = {}) {
 
     var shift by remember { mutableStateOf(ShiftState.OFF) }
     var punct by remember { mutableStateOf(false) }
+    var ctrl by remember { mutableStateOf(false) }
+    var alt by remember { mutableStateOf(false) }
+    fun syncModes() { shift = interp.shift; punct = interp.punct; ctrl = interp.ctrl; alt = interp.alt }
     var lastShown by remember { mutableStateOf("") }
     var lastScore by remember { mutableStateOf<Double?>(null) }
     var lastOk by remember { mutableStateOf(true) }
     var lastInk by remember { mutableStateOf(listOf<Offset>()) }
-    var typed by remember { mutableStateOf("") }
+    // The keys shown in the typed-text strip, kept as keys (not text) so Send can replay them
+    // exactly: Enter as Enter, Ctrl+C as Ctrl+C.
+    var typedKeys by remember { mutableStateOf(listOf<Emit>()) }
+    val typed = typedKeys.joinToString("") { stripLabel(it) }
     var sending by remember { mutableStateOf(sender.available) }
     var showGuide by remember { mutableStateOf(true) }
     // While the window is being resized for the guide, lay out at the height the window is
     // about to have (from -> to), so the pad never stretches or squeezes for a frame.
     var resizeLock by remember { mutableStateOf<Pair<Dp, Dp>?>(null) }
-    val measured = remember { object { var height = 0.dp } }
+    // Window height, and how tall the guide was last laid out (it shrinks in a small window).
+    val measured = remember { object { var height = 0.dp; var guide = 0.dp } }
     fun setGuide(show: Boolean) {
         if (show == showGuide) return
-        val delta = GUIDE_HEIGHT + GAP
+        // Hiding removes the guide as it is now; showing brings it back at full height.
+        val delta = if (show) GUIDE_HEIGHT + GAP else if (measured.guide > 0.dp) measured.guide + GAP else 0.dp
         val base = resizeLock?.second ?: measured.height
         resizeLock = measured.height to (base + if (show) delta else -delta)
         showGuide = show
-        onGuideShown(show)
+        onGuideShown(show, delta)
     }
     var teachMode by remember { mutableStateOf(false) }
     var teachTarget by remember { mutableStateOf<Alphabet.Glyph?>(null) }
@@ -157,16 +193,16 @@ fun GraffitiApp(onGuideShown: (Boolean) -> Unit = {}) {
         lastShown = out.shown
         lastScore = out.score
         lastOk = out.accepted
-        shift = interp.shift
-        punct = interp.punct
+        syncModes()
         for (e in out.emits) {
-            typed = when (e) {
-                is Emit.Ch -> typed + e.c
-                Emit.Backspace -> typed.dropLast(1)
-                // The strip's cursor is always at the end, so there is nothing after it to delete.
-                Emit.Delete -> typed
-                Emit.Enter -> typed + "↵"
-            }.takeLast(200)
+            typedKeys = when (e) {
+                Emit.Backspace -> typedKeys.dropLast(1)
+                // The strip's cursor is always at the end, so there is nothing after it to
+                // delete, and Esc doesn't type anything.
+                Emit.Delete, Emit.Escape -> typedKeys
+                // Characters, Enter, and shortcuts such as [Ctrl+c] are kept.
+                else -> (typedKeys + e).takeLast(200)
+            }
         }
         if (sending) sender.send(out.emits)
     }
@@ -197,17 +233,20 @@ fun GraffitiApp(onGuideShown: (Boolean) -> Unit = {}) {
         if (resizeLock?.let { it.first != windowHeight } == true) resizeLock = null
     }
     val contentHeight = if (lock != null && lock.first == windowHeight) lock.second else windowHeight
-    Column(
-        Modifier.fillMaxWidth().topAlignedHeight(contentHeight).padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(GAP),
+    PadFirstColumn(
+        modifier = Modifier.fillMaxWidth().topAlignedHeight(contentHeight).padding(CONTENT_PADDING),
+        onGuideHeight = { measured.guide = it },
+        onMinHeight = { onMinContentSize(DpSize(MIN_CONTENT_WIDTH, it + CONTENT_PADDING * 2)) },
     ) {
         // ---- header: modes and last result
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("GRAFFITI", color = ChassisText, fontWeight = FontWeight.Bold, letterSpacing = 3.sp, fontSize = 15.sp)
             Spacer(Modifier.weight(1f))
-            ModeChip("SHIFT", shift == ShiftState.ONCE) { interp.toggleShift(); shift = interp.shift }
-            ModeChip("CAPS", shift == ShiftState.LOCK) { interp.toggleCaps(); shift = interp.shift }
-            ModeChip("PUNCT", punct) { interp.togglePunct(); punct = interp.punct }
+            ModeChip("CTRL", ctrl) { interp.toggleCtrl(); syncModes() }
+            ModeChip("ALT", alt) { interp.toggleAlt(); syncModes() }
+            ModeChip("SHIFT", shift == ShiftState.ONCE) { interp.toggleShift(); syncModes() }
+            ModeChip("CAPS", shift == ShiftState.LOCK) { interp.toggleCaps(); syncModes() }
+            ModeChip("PUNCT", punct) { interp.togglePunct(); syncModes() }
             Text(
                 when {
                     lastShown.isEmpty() -> ""
@@ -220,18 +259,19 @@ fun GraffitiApp(onGuideShown: (Boolean) -> Unit = {}) {
                 modifier = Modifier.width(110.dp),
             )
         }
-        Text(status, color = ChassisDim, fontSize = 12.sp)
+        Text(status, color = ChassisDim, fontSize = 12.sp, modifier = Modifier.layoutId(STATUS_ID))
 
         // ---- writing pad
         Pad(
             lastInk = lastInk,
             lastOk = lastOk,
             onStroke = ::onStroke,
-            modifier = Modifier.fillMaxWidth().weight(1f),
+            modifier = Modifier.fillMaxWidth().layoutId(PAD_ID),
         )
 
-        // ---- what has been typed, with always-visible Backspace and Return keys
+        // ---- Esc, what has been typed, then always-visible Backspace, Delete and Return keys
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            PadButton("Esc") { lastInk = emptyList(); deliver(interp.escape()) }
             Box(
                 Modifier.weight(1f).clip(RoundedCornerShape(4.dp)).background(Color(0xFF1C201B)).padding(horizontal = 10.dp, vertical = 6.dp)
             ) {
@@ -242,6 +282,12 @@ fun GraffitiApp(onGuideShown: (Boolean) -> Unit = {}) {
                     fontSize = 14.sp,
                     maxLines = 1,
                 )
+            }
+            // Practice mode: type something here, then send it in one go. The strip is kept,
+            // so the same text or command can be sent again.
+            if (sender.available && !sending && typedKeys.isNotEmpty()) PadButton("Send", active = true) {
+                sender.send(typedKeys)
+                status = "Sent \"${typed.takeLast(40)}\" to the focused app. Send again, or Clear."
             }
             PadButton("⌫ Back") { lastInk = emptyList(); deliver(interp.press("backspace", Group.SPECIAL)) }
             PadButton("⌦ Del") { lastInk = emptyList(); deliver(interp.delete()) }
@@ -265,7 +311,7 @@ fun GraffitiApp(onGuideShown: (Boolean) -> Unit = {}) {
                 status = if (sending) "Sending keystrokes to the focused app." else "Practice mode: nothing is sent."
             }
             PadButton("Clear") {
-                typed = ""; interp.reset(); shift = ShiftState.OFF; punct = false; lastShown = ""; lastInk = emptyList()
+                typedKeys = emptyList(); interp.reset(); syncModes(); lastShown = ""; lastInk = emptyList()
             }
             if (teachMode) PadButton(if (confirmForget) "Really forget?" else "Forget mine") {
                 if (confirmForget) {
@@ -291,11 +337,96 @@ fun GraffitiApp(onGuideShown: (Boolean) -> Unit = {}) {
                     }
                 },
                 onTap = { if (!teachMode) { lastInk = emptyList(); deliver(interp.tap()) } },
-                modifier = Modifier.fillMaxWidth().height(GUIDE_HEIGHT),
+                modifier = Modifier.fillMaxWidth().layoutId(GUIDE_ID),
             )
         }
     }
     }
+}
+
+private const val PAD_ID = "pad"
+private const val GUIDE_ID = "guide"
+private const val STATUS_ID = "status"
+
+/**
+ * A top-to-bottom stack, like a Column with [GAP] between rows, that hands out height in order
+ * of importance: first the pad gets [PAD_MIN_HEIGHT], then every plain row its natural height,
+ * then the status line, then the guide (up to [GUIDE_HEIGHT]), and the pad takes whatever is
+ * left over. Rows that don't fit (guide, then status) are left out rather than squeezing the pad.
+ * Reports the smallest height that still shows the pad and plain rows, for the window minimum.
+ */
+@Composable
+private fun PadFirstColumn(
+    modifier: Modifier,
+    onGuideHeight: (Dp) -> Unit,
+    onMinHeight: (Dp) -> Unit,
+    content: @Composable () -> Unit,
+) {
+    val guideCb by rememberUpdatedState(onGuideHeight)
+    val minCb by rememberUpdatedState(onMinHeight)
+    Layout(content, modifier) { measurables, constraints ->
+        val w = constraints.maxWidth
+        val gap = GAP.roundToPx()
+        val padMin = PAD_MIN_HEIGHT.roundToPx()
+        val natural = Constraints(maxWidth = w)
+        val placeables = arrayOfNulls<Placeable>(measurables.size)
+
+        // Plain rows (header, keys, controls) always show at their natural height.
+        var fixed = 0
+        var rows = 1 // the pad
+        measurables.forEachIndexed { i, m ->
+            if (m.layoutId == null) { val p = m.measure(natural); placeables[i] = p; fixed += p.height; rows++ }
+        }
+        minCb(((fixed + padMin + gap * (rows - 1)) / density).dp)
+
+        var left = constraints.maxHeight - fixed - gap * (rows - 1) - padMin
+        // Then the status line, if it fits.
+        val statusIdx = measurables.indexOfFirst { it.layoutId == STATUS_ID }
+        if (statusIdx >= 0) {
+            val p = measurables[statusIdx].measure(natural)
+            if (p.height + gap <= left) { placeables[statusIdx] = p; left -= p.height + gap }
+        }
+        // Then the guide, shrunk to fit, or left out if not even a row would show.
+        val guideIdx = measurables.indexOfFirst { it.layoutId == GUIDE_ID }
+        var guideH = 0
+        if (guideIdx >= 0) {
+            val h = minOf(GUIDE_HEIGHT.roundToPx(), left - gap)
+            if (h >= GUIDE_MIN.roundToPx()) {
+                placeables[guideIdx] = measurables[guideIdx].measure(Constraints.fixed(w, h))
+                guideH = h; left -= h + gap
+            }
+        }
+        guideCb((guideH / density).dp)
+        // The pad takes everything that is left on top of its minimum.
+        val padIdx = measurables.indexOfFirst { it.layoutId == PAD_ID }
+        placeables[padIdx] = measurables[padIdx].measure(Constraints.fixed(w, padMin + maxOf(left, 0)))
+
+        layout(w, constraints.maxHeight) {
+            var y = 0
+            for (p in placeables) {
+                if (p == null) continue
+                p.place(0, y)
+                y += p.height + gap
+            }
+        }
+    }
+}
+
+/** How a key looks in the typed-text strip: the character, ↵ for Enter, [Ctrl+c] for a shortcut. */
+private fun stripLabel(e: Emit): String = when (e) {
+    is Emit.Ch -> e.c.toString()
+    Emit.Enter -> "↵"
+    Emit.Backspace -> ""
+    Emit.Delete -> ""
+    Emit.Escape -> ""
+    is Emit.Combo -> "[" + e.prefix + when (val k = e.key) {
+        is Emit.Ch -> if (k.c == ' ') "Space" else k.c.toString()
+        Emit.Backspace -> "Back"
+        Emit.Delete -> "Del"
+        Emit.Enter -> "Enter"
+        Emit.Escape -> "Esc"
+        is Emit.Combo -> ""
+    } + "]"
 }
 
 /**
@@ -370,7 +501,7 @@ private fun Guide(
     val grid = rememberLazyGridState()
     Box(modifier) {
         LazyVerticalGrid(
-            columns = GridCells.Adaptive(62.dp),
+            columns = GridCells.Adaptive(46.dp),
             state = grid,
             // Leave room for the scrollbar, and let pen, touch or mouse drag the guide up and
             // down. A drag past the touch slop cancels the key press underneath it.
@@ -409,12 +540,12 @@ private fun Guide(
 @Composable
 private fun TapCell(onClick: () -> Unit) {
     Column(
-        Modifier.clip(RoundedCornerShape(5.dp)).background(Lcd).clickable { onClick() }.padding(4.dp),
+        Modifier.clip(RoundedCornerShape(4.dp)).background(Lcd).clickable { onClick() }.padding(3.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Canvas(Modifier.size(40.dp)) { drawCircle(StartDot, 3.5.dp.toPx(), center) }
-        Text("tap", color = Ink, fontSize = 11.sp, fontWeight = FontWeight.Medium, maxLines = 1)
-        Text("punct / .", color = Ink.copy(alpha = 0.5f), fontSize = 9.sp, maxLines = 1)
+        Canvas(Modifier.size(28.dp)) { drawCircle(StartDot, 2.5.dp.toPx(), center) }
+        Text("tap", color = Ink, fontSize = 10.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+        Text("punct / .", color = Ink.copy(alpha = 0.5f), fontSize = 8.sp, maxLines = 1)
     }
 }
 
@@ -427,18 +558,18 @@ private fun GlyphCell(g: Alphabet.Glyph, selected: Boolean, mine: Int, onClick: 
         Group.PUNCT -> "tap+"
     }
     Column(
-        Modifier.clip(RoundedCornerShape(5.dp))
+        Modifier.clip(RoundedCornerShape(4.dp))
             .background(if (selected) LcdSelected else Lcd)
             .clickable { onClick() }
-            .padding(4.dp),
+            .padding(3.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Canvas(Modifier.size(40.dp)) { glyph(g.shape) }
+        Canvas(Modifier.size(28.dp)) { glyph(g.shape) }
         Text(
             g.label + if (mine > 0) " +$mine" else "",
-            color = Ink, fontSize = 11.sp, fontWeight = FontWeight.Medium, maxLines = 1,
+            color = Ink, fontSize = 10.sp, fontWeight = FontWeight.Medium, maxLines = 1,
         )
-        Text(area, color = Ink.copy(alpha = 0.5f), fontSize = 9.sp, maxLines = 1)
+        Text(area, color = Ink.copy(alpha = 0.5f), fontSize = 8.sp, maxLines = 1)
     }
 }
 
@@ -446,14 +577,14 @@ private fun GlyphCell(g: Alphabet.Glyph, selected: Boolean, mine: Int, onClick: 
 private fun DrawScope.glyph(shape: List<Pt>) {
     val minX = shape.minOf { it.x }; val maxX = shape.maxOf { it.x }
     val minY = shape.minOf { it.y }; val maxY = shape.maxOf { it.y }
-    val pad = 5.dp.toPx()
+    val pad = 3.5.dp.toPx()
     val bw = maxOf(maxX - minX, 1e-6); val bh = maxOf(maxY - minY, 1e-6)
     val k = minOf((size.width - 2 * pad) / bw, (size.height - 2 * pad) / bh)
     val ox = (size.width - bw * k) / 2 - minX * k
     val oy = (size.height - bh * k) / 2 - minY * k
     val pts = shape.map { Offset((ox + it.x * k).toFloat(), (oy + it.y * k).toFloat()) }
-    ink(pts, Ink, 2.dp.toPx())
-    drawCircle(StartDot, 3.5.dp.toPx(), pts.first())
+    ink(pts, Ink, 1.5.dp.toPx())
+    drawCircle(StartDot, 2.5.dp.toPx(), pts.first())
 }
 
 @Composable

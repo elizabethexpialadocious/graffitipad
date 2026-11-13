@@ -34,7 +34,7 @@ and `runtime` folders next to it.
 gradlew.bat packageSingleExe
 ```
 
-This makes one file, `build\single\GraffitiPad.exe` (about 57 MB), with the portable app packed
+This makes one file, `build\single\GraffitiPad-1.0.0.exe` (about 57 MB), with the portable app packed
 inside it. Copy just that file anywhere and run it. The first time a build runs on a PC, it
 unpacks itself to `%LOCALAPPDATA%\GraffitiPad\` (about 120 MB, a couple of seconds) and starts
 from there. Later runs start straight away. When a newer build runs, it unpacks fresh and
@@ -76,8 +76,11 @@ gradlew.bat test
 | tap | Punctuation. The next stroke is read as punctuation (`, ? ! - ' ( ) /`), and a second tap types `.` |
 
 - **The guide is also an on-screen keyboard.** Tap any shape in it to type that character, the same as if you had drawn it. Shift and Caps Lock still apply. Punctuation keys type right away, and the extra **tap** key does the same as tapping the pad: once for punctuation mode, twice for `.`. To scroll the guide, use the mouse wheel or the scrollbar, or drag it up and down with a pen or finger.
-- **⌫ Back**, **⌦ Del** (forward delete) and **↵ Return** next to the typed-text strip are always visible, even when the guide is hidden or scrolled. In punctuation mode, Back cancels punctuation mode instead of deleting, just like the backspace stroke.
+- **The writing area always stays usable.** It never gets shorter than a set minimum. When you make the window smaller, the guide shrinks first and then disappears, then the status line goes, and the window won't get smaller than that.
+- **Esc**, **⌫ Back**, **⌦ Del** (forward delete) and **↵ Return** next to the typed-text strip are always visible, even when the guide is hidden or scrolled. They work with CTRL and ALT too. In punctuation mode, Back cancels punctuation mode instead of deleting, just like the backspace stroke.
+- **CTRL and ALT** in the header send shortcuts. Click one, then write or tap the next key, and that key is sent with Ctrl or Alt held down. For example, CTRL then `c` sends Ctrl+C, and CTRL then **⌫ Back** deletes a word. The modifier switches off after one key; click it again before then to cancel. CTRL and ALT can be used together, and with the Shift stroke (Ctrl+Shift+Z). Caps Lock doesn't add Shift to a shortcut, just like on a real keyboard. The strip shows shortcuts as `[Ctrl+c]`. Windows does not let any program send Ctrl+Alt+Del.
 - **SHIFT, CAPS and PUNCT** in the header show the current mode, and you can click them. Each one turns its mode on, or back off if it was already on. SHIFT applies to the next letter only, and CAPS stays on until you turn it off.
+- **Send** shows up in practice mode (Keys: off) once the typed-text strip has something in it. It types the whole strip into the focused app in one go, including Enter and shortcuts such as `[Ctrl+c]`. The strip isn't cleared, so you can send the same text or command again. **Clear** empties it.
 - **Keys: on/off** turns sending keystrokes on or off. With it off, you can practise; the strip under the pad still shows what you wrote.
 - **Teach** lets you add your own examples. Pick a shape in the guide, then draw it your way three or four times. Your examples are added next to the built-in ones and saved in `%APPDATA%\GraffitiPad\templates.txt`. **Forget mine** removes them.
 
