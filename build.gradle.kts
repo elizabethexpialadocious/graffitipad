@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "graffiti"
-version = "1.0.0"
+version = "1.0.1"
 
 dependencies {
     implementation(compose.desktop.currentOs)
@@ -26,7 +26,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Exe)
             packageName = "GraffitiPad"
-            packageVersion = "1.0.0"
+            packageVersion = "1.0.1"
             description = "Write Palm Graffiti strokes, get keystrokes"
             // java.desktop is needed for java.awt.Robot (keystrokes)
             modules("java.desktop")

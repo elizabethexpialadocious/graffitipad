@@ -4,6 +4,12 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -337,6 +343,10 @@ fun GraffitiApp(
                     }
                 },
                 onTap = { if (!teachMode) { lastInk = emptyList(); deliver(interp.tap()) } },
+                onForget = { g ->
+                    library.forgetUser(g.name, g.group); version++
+                    status = "Your examples of '${g.label}' were removed; the built-in shape remains."
+                },
                 modifier = Modifier.fillMaxWidth().layoutId(GUIDE_ID),
             )
         }
@@ -496,6 +506,7 @@ private fun Guide(
     teachMode: Boolean,
     onPick: (Alphabet.Glyph) -> Unit,
     onTap: () -> Unit,
+    onForget: (Alphabet.Glyph) -> Unit,
     modifier: Modifier,
 ) {
     val grid = rememberLazyGridState()
@@ -516,7 +527,7 @@ private fun Guide(
         ) {
             items(Alphabet.all) { g ->
                 val mine = if (version >= 0) library.userCount(g.name, g.group) else 0
-                GlyphCell(g, g === selected, mine) { onPick(g) }
+                GlyphCell(g, g === selected, mine, onForget = { onForget(g) }) { onPick(g) }
             }
             // Tap isn't a shape you can teach, but as a key it is handy: once for
             // punctuation mode, twice for a period.
@@ -549,8 +560,14 @@ private fun TapCell(onClick: () -> Unit) {
     }
 }
 
+/**
+ * One key in the guide. Click types it (or picks it in teach mode); right-click or long-press
+ * opens a menu for forgetting the examples you taught for this shape.
+ */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun GlyphCell(g: Alphabet.Glyph, selected: Boolean, mine: Int, onClick: () -> Unit) {
+private fun GlyphCell(g: Alphabet.Glyph, selected: Boolean, mine: Int, onForget: () -> Unit, onClick: () -> Unit) {
+    var menu by remember { mutableStateOf(false) }
     val area = when (g.group) {
         Group.SPECIAL -> "any"
         Group.LETTER -> "abc"
@@ -560,10 +577,32 @@ private fun GlyphCell(g: Alphabet.Glyph, selected: Boolean, mine: Int, onClick: 
     Column(
         Modifier.clip(RoundedCornerShape(4.dp))
             .background(if (selected) LcdSelected else Lcd)
-            .clickable { onClick() }
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    val e = awaitPointerEvent()
+                    if (e.type == PointerEventType.Press && e.buttons.isSecondaryPressed) {
+                        e.changes.forEach { it.consume() }
+                        menu = true
+                    }
+                }
+            }
+            .combinedClickable(onLongClick = { menu = true }) { onClick() }
             .padding(3.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            DropdownMenuItem(
+                text = {
+                    Text(
+                        if (mine > 0) "Forget my $mine example${if (mine == 1) "" else "s"} of '${g.label}'"
+                        else "No examples of your own for '${g.label}'",
+                        fontSize = 12.sp,
+                    )
+                },
+                enabled = mine > 0,
+                onClick = { menu = false; onForget() },
+            )
+        }
         Canvas(Modifier.size(28.dp)) { glyph(g.shape) }
         Text(
             g.label + if (mine > 0) " +$mine" else "",

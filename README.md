@@ -22,7 +22,7 @@ gradlew.bat run
 gradlew.bat packagePortable
 ```
 
-This makes `build\portable\GraffitiPad-1.0.0-portable.zip` (about 57 MB). It includes its own
+This makes `build\portable\GraffitiPad-1.0.1-portable.zip` (about 57 MB). It includes its own
 Java runtime, so the PC it runs on doesn't need Java. Unzip it anywhere, such as a USB stick, a
 network share or the desktop, and run `GraffitiPad\GraffitiPad.exe`. Nothing is installed and no
 admin rights are needed. Keep the whole `GraffitiPad` folder together: the exe needs the `app`
@@ -34,7 +34,7 @@ and `runtime` folders next to it.
 gradlew.bat packageSingleExe
 ```
 
-This makes one file, `build\single\GraffitiPad-1.0.0.exe` (about 57 MB), with the portable app packed
+This makes one file, `build\single\GraffitiPad-1.0.1.exe` (about 57 MB), with the portable app packed
 inside it. Copy just that file anywhere and run it. The first time a build runs on a PC, it
 unpacks itself to `%LOCALAPPDATA%\GraffitiPad\` (about 120 MB, a couple of seconds) and starts
 from there. Later runs start straight away. When a newer build runs, it unpacks fresh and
@@ -82,7 +82,7 @@ gradlew.bat test
 - **SHIFT, CAPS and PUNCT** in the header show the current mode, and you can click them. Each one turns its mode on, or back off if it was already on. SHIFT applies to the next letter only, and CAPS stays on until you turn it off.
 - **Send** shows up in practice mode (Keys: off) once the typed-text strip has something in it. It types the whole strip into the focused app in one go, including Enter and shortcuts such as `[Ctrl+c]`. The strip isn't cleared, so you can send the same text or command again. **Clear** empties it.
 - **Keys: on/off** turns sending keystrokes on or off. With it off, you can practise; the strip under the pad still shows what you wrote.
-- **Teach** lets you add your own examples. Pick a shape in the guide, then draw it your way three or four times. Your examples are added next to the built-in ones and saved in `%APPDATA%\GraffitiPad\templates.txt`. **Forget mine** removes them.
+- **Teach** lets you add your own examples. Pick a shape in the guide, then draw it your way three or four times. Your examples are added next to the built-in ones and saved in `%APPDATA%\GraffitiPad\templates.txt`. **Forget mine** removes them all; to forget just one shape, right-click or long-press it in the guide.
 
 ## How recognition works
 

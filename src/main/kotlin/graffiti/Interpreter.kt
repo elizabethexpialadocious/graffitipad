@@ -39,6 +39,11 @@ class TemplateLibrary(private val file: File?) {
 
     fun forgetUser() { user.clear(); save() }
 
+    /** Removes your own examples of one shape, keeping the built-in ones and everything else you taught. */
+    fun forgetUser(name: String, group: Group) {
+        if (user.removeAll { it.name == name && it.group == group }) save()
+    }
+
     private fun load() {
         val f = file ?: return
         if (!f.exists()) return

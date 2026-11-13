@@ -126,4 +126,15 @@ class RecognizerTest {
         val chars = ('a'..'z') + ('A'..'Z') + ('0'..'9') + Alphabet.punctChar.values + listOf(' ', '.')
         for (c in chars) assertTrue(KeySender.keyFor(c) != null, "no key for '$c'")
     }
+
+    @Test fun forgettingOneShapeKeepsTheOthers() {
+        val l = TemplateLibrary(null)
+        val a = Alphabet.all.first { it.group == Group.LETTER }
+        val b = Alphabet.all.last { it.group == Group.LETTER }
+        repeat(2) { l.teach(a.name, a.group, a.shape) }
+        l.teach(b.name, b.group, b.shape)
+        l.forgetUser(a.name, a.group)
+        assertEquals(0, l.userCount(a.name, a.group))
+        assertEquals(1, l.userCount(b.name, b.group))
+    }
 }
